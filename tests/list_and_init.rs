@@ -1,7 +1,7 @@
 //! End-to-end checks against the real binary with a scratch HOME, XDG config
 //! and state, and a throwaway project tree.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 struct Scratch {
@@ -72,6 +72,14 @@ windows = [
     fn run(&self, args: &[&str]) -> Output {
         self.command().args(args).output().expect("binary runs")
     }
+
+    fn run_in(&self, dir: &Path, args: &[&str]) -> Output {
+        self.command()
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .expect("binary runs")
+    }
 }
 
 fn stdout(output: &Output) -> String {
@@ -124,6 +132,29 @@ fn list_reports_a_broken_configuration_with_a_failing_exit() {
     assert!(!output.status.success());
     assert!(stdout(&output).is_empty());
     assert!(stderr(&output).contains("config.toml"));
+}
+
+#[test]
+fn init_creates_the_project_file_once_and_refuses_to_overwrite_it() {
+    let scratch = Scratch::new();
+    let project = scratch.path("projects/gamma");
+    std::fs::create_dir_all(&project).expect("project dir");
+
+    let first = scratch.run_in(&project, &["init"]);
+    assert!(first.status.success(), "stderr: {}", stderr(&first));
+    let config = project.join(".tsess.toml");
+    let written = std::fs::read_to_string(&config).expect("project file exists");
+    assert!(written.contains("[[layouts.dev.windows]]"));
+    assert!(written.contains("nvim ."));
+
+    let second = scratch.run_in(&project, &["init"]);
+    assert!(!second.status.success(), "init must refuse a second write");
+    assert!(stderr(&second).contains("already exists"));
+    assert_eq!(
+        std::fs::read_to_string(&config).expect("project file still readable"),
+        written,
+        "a refused init must leave the file untouched"
+    );
 }
 
 #[test]

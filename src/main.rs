@@ -39,8 +39,9 @@ fn run(args: Args) -> anyhow::Result<ExitCode> {
     );
 
     let scanner = adapters::IgnoreScanner;
+    let files = adapters::ProjectFiles;
 
-    match app::run(&args, &paths, &scanner)? {
+    match app::run(&args, &paths, &scanner, &files)? {
         Outcome::Done => Ok(ExitCode::SUCCESS),
         Outcome::NotImplemented(what) => {
             eprintln!("tsess: {what} is not available in this build yet");

@@ -24,6 +24,19 @@ pub enum DiscoveryError {
     Walk { path: PathBuf, message: String },
 }
 
+/// Why a project configuration file could not be written.
+#[derive(Debug, Error)]
+pub enum StoreError {
+    #[error("`{0}` already exists; refusing to overwrite it")]
+    AlreadyExists(PathBuf),
+    #[error("could not write `{path}`: {source}")]
+    Write {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+}
+
 /// Why a configuration file could not be turned into usable settings.
 #[derive(Debug, Error)]
 pub enum ConfigError {
