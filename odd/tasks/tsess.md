@@ -104,7 +104,7 @@ S11. Decisions taken with the user (2026-11-09):
 
 | ID | Task | Specs | Route | Commit |
 | --- | --- | --- | --- | --- |
-| T1 | Foundation: scaffold, domain value types, XDG paths, config loading (global + project), project scanning with `ignore`, tracing to file, `list` and `init` subcommands | S2, S3, S6, S9, S10 | worker | _pending_ |
+| T1 | Foundation: scaffold, domain value types, XDG paths, config loading (global + project), project scanning with `ignore`, tracing to file, `list` and `init` subcommands | S2, S3, S6, S9, S10 | inline (writer guard) | `5258d45`, `469ceb8` |
 | T2 | tmux adapter and session lifecycle: `open`, `last`, `kill`, layout materialization (windows/panes/send-keys), session runtime state + GC | S1, S4, S7, S9, S10 | worker | _pending_ |
 | T3 | ratatui picker in a tmux floating popup with preview, rename and session counter; `fzf` alternative backend | S5, S6, S9, S10 | worker | _pending_ |
 | T4 | Layout editor: build and resize panes with mouse and keyboard, save-destination prompt (`p`/`g`/`s`) | S7, S11 D3 | worker | _pending_ |
@@ -161,3 +161,12 @@ falta `display-message -p '#S'`, `list-sessions -F`, `set-option -t =n @tsess_la
 `new-window -d`, `split-window -d -p`, `send-keys … C-m`, `list-panes -F`, `resize-pane`,
 `resize-window`, `select-layout`, `switch-client -l`, `rename-session`, `display-popup -E`,
 `kill-session`. El `=` en los targets es obligatorio para no matchear por prefijo.
+
+L4 (T1 cerrado, 2026-11-09): implementado inline porque el guard de writers exige la referencia
+canónica `Spec: odd/tasks/<feature>.md, T<n>` y no se emitió. Evidencia: `cargo build`,
+`cargo test --all-targets` (48 unit + 6 integración), `cargo clippy --all-targets -- -D warnings` y
+`cargo fmt --check` en verde. El árbol de trabajo se dividió en dos work units: `5258d45`
+(descubrimiento + `list`) y `469ceb8` (`init` + README + mockups). Los commits quedaron sin firma SSH
+porque la clave de firma pide passphrase sin askpass en este entorno; re-firmar con
+`git rebase --exec 'git commit --amend --no-edit -S' main`. `list` todavía no muestra sesiones
+activas: eso entra con T2.
