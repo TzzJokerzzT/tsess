@@ -1,0 +1,221 @@
+use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
+
+use super::layout::{Layout, Layouts, Pane, Split, Window};
+use super::project::{ResolvedRoot, SearchRoot};
+
+/// Which fuzzy finder the interactive picker uses.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PickerBackend {
+    /// Built into the binary with ratatui; the only backend with preview,
+    /// rename and in-picker layout switching.
+    #[default]
+    Builtin,
+    /// Delegates the choice to an installed `fzf`.
+    Fzf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SearchSection {
+    #[serde(default = "default_roots")]
+    pub roots: Vec<SearchRoot>,
+    #[serde(default = "default_markers")]
+    pub markers: Vec<String>,
+    #[serde(default = "default_exclude")]
+    pub exclude: Vec<String>,
+}
+
+impl Default for SearchSection {
+    fn default() -> Self {
+        Self {
+            roots: default_roots(),
+            markers: default_markers(),
+            exclude: default_exclude(),
+        }
+    }
+}
+
+fn default_roots() -> Vec<SearchRoot> {
+    vec![SearchRoot::new("~/Projects", 2)]
+}
+
+fn default_markers() -> Vec<String> {
+    [".git", "Cargo.toml", "package.json"]
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+}
+
+fn default_exclude() -> Vec<String> {
+    ["node_modules", "target", "dist"]
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PickerSection {
+    #[serde(default)]
+    pub backend: PickerBackend,
+}
+
+impl Default for PickerSection {
+    fn default() -> Self {
+        Self {
+            backend: PickerBackend::Builtin,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DefaultsSection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<String>,
+}
+
+/// The global configuration file, `~/.config/tsess/config.toml`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct TsessConfig {
+    #[serde(default)]
+    pub search: SearchSection,
+    #[serde(default)]
+    pub picker: PickerSection,
+    #[serde(default)]
+    pub defaults: DefaultsSection,
+    #[serde(default)]
+    pub layouts: Layouts,
+}
+
+/// A per-project `.tsess.toml`. Every section is optional so a project only
+/// states what it overrides.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picker: Option<PickerSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defaults: Option<DefaultsSection>,
+    #[serde(default, skip_serializing_if = "Layouts::is_empty")]
+    pub layouts: Layouts,
+}
+
+impl ProjectConfig {
+    /// Overlay this project onto the global configuration.
+    pub fn apply_to(self, base: &mut TsessConfig) {
+        if let Some(picker) = self.picker {
+            base.picker = picker;
+        }
+        if let Some(defaults) = self.defaults
+            && defaults.layout.is_some()
+        {
+            base.defaults = defaults;
+        }
+        for (name, layout) in self.layouts {
+            base.layouts.insert(name, layout);
+        }
+    }
+}
+
+/// The layout used when a configuration file says nothing at all: NeoVim on
+/// the left, the dev server and a terminal stacked on the right.
+pub fn builtin_dev_layout() -> Layout {
+    Layout::new(vec![
+        Window::new("editor", None, vec![Pane::new("nvim .")]),
+        Window::new(
+            "run",
+            Some(Split::Vertical),
+            vec![Pane::new(""), Pane::new("")],
+        ),
+    ])
+}
+
+pub const BUILTIN_LAYOUT_NAME: &str = "dev";
+
+impl TsessConfig {
+    /// Configuration used when no global file exists.
+    pub fn builtin() -> Self {
+        let mut layouts = Layouts::new();
+        layouts.insert(BUILTIN_LAYOUT_NAME.to_string(), builtin_dev_layout());
+        Self {
+            search: SearchSection::default(),
+            picker: PickerSection::default(),
+            defaults: DefaultsSection {
+                layout: Some(BUILTIN_LAYOUT_NAME.to_string()),
+            },
+            layouts,
+        }
+    }
+}
+
+/// Fully resolved configuration: roots expanded, layouts validated, default
+/// layout guaranteed to exist.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Settings {
+    pub search: SearchSection,
+    pub roots: Vec<ResolvedRoot>,
+    pub picker: PickerSection,
+    pub default_layout: String,
+    pub layouts: Layouts,
+    /// Configuration files that contributed, in precedence order.
+    pub sources: Vec<PathBuf>,
+}
+
+impl Settings {
+    pub fn scanned_roots(&self) -> &[ResolvedRoot] {
+        &self.roots
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_builtin_configuration_ships_a_dev_layout() {
+        let config = TsessConfig::builtin();
+        let layout = config.layouts.get(BUILTIN_LAYOUT_NAME).expect("dev layout");
+        assert_eq!(layout.validate(BUILTIN_LAYOUT_NAME), Ok(()));
+        assert_eq!(config.defaults.layout.as_deref(), Some("dev"));
+    }
+
+    #[test]
+    fn the_builtin_dev_layout_puts_the_editor_left_and_the_terminal_below() {
+        let layout = builtin_dev_layout();
+        assert_eq!(layout.windows.len(), 2);
+        assert_eq!(layout.windows[0].name, "editor");
+        assert_eq!(layout.windows[0].panes[0].cmd, "nvim .");
+        assert_eq!(layout.windows[1].name, "run");
+        assert_eq!(layout.windows[1].split, Some(Split::Vertical));
+        assert_eq!(layout.windows[1].panes.len(), 2);
+    }
+
+    #[test]
+    fn the_picker_defaults_to_the_builtin_backend() {
+        assert_eq!(PickerSection::default().backend, PickerBackend::Builtin);
+    }
+
+    #[test]
+    fn a_project_overlay_replaces_the_default_layout_and_adds_its_own() {
+        let mut base = TsessConfig::builtin();
+        let overlay: ProjectConfig = toml::from_str(
+            r#"
+            [defaults]
+            layout = "solo"
+
+            [layouts.solo]
+            windows = [{ name = "editor", panes = [{ cmd = "nvim ." }] }]
+            "#,
+        )
+        .expect("project overlay parses");
+        overlay.apply_to(&mut base);
+        assert_eq!(base.defaults.layout.as_deref(), Some("solo"));
+        assert!(base.layouts.contains_key("solo"));
+        assert!(base.layouts.contains_key("dev"));
+    }
+}
